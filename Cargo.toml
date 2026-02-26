@@ -1,0 +1,27 @@
+[package]
+name = "loopengine"
+version = "1.0.0"
+edition = "2021"
+description = "Rust client for the LoopEngine Ingest API"
+license = "MIT"
+repository = "https://github.com/LoopEngine-dev/loopengine-rs"
+homepage = "https://loopengine.dev"
+documentation = "https://docs.rs/loopengine"
+keywords = ["loopengine", "feedback", "api", "client"]
+categories = ["api-bindings", "web-programming::http-client"]
+readme = "README.md"
+exclude = [".github", "tests"]
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+wiremock = "0.6"

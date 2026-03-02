@@ -72,7 +72,26 @@ impl Client {
     /// Returns an error if serialization fails, the HTTP request fails, or the API returns a
     /// non-2xx status code.
     pub async fn send<T: Serialize>(&self, payload: T) -> Result<(), Error> {
-        let body = self.build_body(payload)?;
+        self.send_with_geo(payload, None, None).await
+    }
+
+    /// Sends `payload` to the Ingest API with optional device coordinates.
+    ///
+    /// When both `lat` and `lon` are [`Some`], the SDK adds `geo_lat` and `geo_lon` to the
+    /// request body; they are included in the HMAC signature. Pass [`None`] for both to use
+    /// IP-based geolocation. Valid ranges: latitude -90 to 90, longitude -180 to 180.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization fails, the HTTP request fails, or the API returns a
+    /// non-2xx status code.
+    pub async fn send_with_geo<T: Serialize>(
+        &self,
+        payload: T,
+        lat: Option<f64>,
+        lon: Option<f64>,
+    ) -> Result<(), Error> {
+        let body = self.build_body_with_geo(payload, lat, lon)?;
 
         let (timestamp, signature) =
             sign_request(&self.project_secret, "POST", API_PATH, &body);
@@ -103,8 +122,13 @@ impl Client {
         Ok(())
     }
 
-    /// Serializes `payload` to JSON bytes, injecting `project_id` into the top-level object.
-    fn build_body<T: Serialize>(&self, payload: T) -> Result<Vec<u8>, Error> {
+    /// Serializes `payload` to JSON bytes, injecting `project_id` and optionally `geo_lat`/`geo_lon`.
+    fn build_body_with_geo<T: Serialize>(
+        &self,
+        payload: T,
+        lat: Option<f64>,
+        lon: Option<f64>,
+    ) -> Result<Vec<u8>, Error> {
         let mut value = serde_json::to_value(payload)?;
 
         match value {
@@ -113,6 +137,10 @@ impl Client {
                     "project_id".to_string(),
                     Value::String(self.project_id.clone()),
                 );
+                if let (Some(lat), Some(lon)) = (lat, lon) {
+                    map.insert("geo_lat".to_string(), serde_json::json!(lat));
+                    map.insert("geo_lon".to_string(), serde_json::json!(lon));
+                }
             }
             Value::Null => {
                 let mut map = serde_json::Map::new();
@@ -120,6 +148,10 @@ impl Client {
                     "project_id".to_string(),
                     Value::String(self.project_id.clone()),
                 );
+                if let (Some(lat), Some(lon)) = (lat, lon) {
+                    map.insert("geo_lat".to_string(), serde_json::json!(lat));
+                    map.insert("geo_lon".to_string(), serde_json::json!(lon));
+                }
                 value = Value::Object(map);
             }
             _ => {
@@ -229,7 +261,7 @@ mod tests {
     fn build_body_injects_project_id() {
         let c = Client::new("pk", "psk", "proj_123").unwrap();
         let body = c
-            .build_body(serde_json::json!({"message": "hi"}))
+            .build_body_with_geo(serde_json::json!({"message": "hi"}), None, None)
             .unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["project_id"], "proj_123");
@@ -239,8 +271,38 @@ mod tests {
     #[test]
     fn build_body_null_payload() {
         let c = Client::new("pk", "psk", "proj_123").unwrap();
-        let body = c.build_body(serde_json::Value::Null).unwrap();
+        let body = c
+            .build_body_with_geo(serde_json::Value::Null, None, None)
+            .unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["project_id"], "proj_123");
+    }
+
+    #[test]
+    fn build_body_with_geo_injects_lat_lon() {
+        let c = Client::new("pk", "psk", "proj_123").unwrap();
+        let body = c
+            .build_body_with_geo(
+                serde_json::json!({"message": "hi"}),
+                Some(34.05),
+                Some(-118.25),
+            )
+            .unwrap();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["project_id"], "proj_123");
+        assert_eq!(v["message"], "hi");
+        assert_eq!(v["geo_lat"], 34.05);
+        assert_eq!(v["geo_lon"], -118.25);
+    }
+
+    #[test]
+    fn build_body_with_geo_omits_when_only_one() {
+        let c = Client::new("pk", "psk", "proj_123").unwrap();
+        let body = c
+            .build_body_with_geo(serde_json::json!({"message": "hi"}), Some(34.05), None)
+            .unwrap();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(v.get("geo_lat").is_none());
+        assert!(v.get("geo_lon").is_none());
     }
 }

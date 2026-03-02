@@ -37,9 +37,27 @@ async fn main() {
 ```
 
 - **`Client::new(key, secret, project_id)`** — Builds a client. Use your project key, secret, and project ID from the LoopEngine dashboard. Returns an error if any credential is empty.
-- **`client.send(payload).await`** — Sends the payload to the Ingest API at `api.loopengine.dev`. `project_id` is added automatically. The payload must match the **fields and constraints** configured for your project in the LoopEngine dashboard (e.g. required fields, allowed keys, value types). You can pass any value that implements `serde::Serialize` and serializes to a JSON object (a `serde_json::json!` map, a struct with `#[derive(Serialize)]`, etc.).
+- **`client.send(payload).await`** — Sends the payload to the Ingest API at `api.loopengine.dev`. `project_id` is added automatically. The payload must match the **fields and constraints** configured for your project in the LoopEngine dashboard (e.g. required fields, allowed keys, value types). You can pass any value that implements `serde::Serialize` and serializes to a JSON object (a `serde_json::json!` map, a struct with `#[derive(Serialize)]`, etc.). Use **`client.send_with_geo(payload, lat, lon).await`** to send device coordinates (see Geolocation below).
 
 The client is safe for concurrent use — it wraps a [`reqwest::Client`](https://docs.rs/reqwest) which maintains an internal connection pool.
+
+## Geolocation
+
+You can send device location so feedback is associated with coordinates instead of IP-based geo. Use `send_with_geo` and pass `Some(lat)` and `Some(lon)`. When **both** are provided, the SDK adds `geo_lat` and `geo_lon` to the request body; they are included in the HMAC signature. Pass `None` for both to use IP-based geolocation (or use `send(payload)`). Valid ranges: latitude -90 to 90, longitude -180 to 180.
+
+```rust
+// Without geo (IP-based location is used)
+client.send(serde_json::json!({"message": "Feedback"})).await?;
+
+// With device coordinates
+client
+    .send_with_geo(
+        serde_json::json!({"message": "Bug at my location"}),
+        Some(34.05),
+        Some(-118.25),
+    )
+    .await?;
+```
 
 ## Custom HTTP client
 

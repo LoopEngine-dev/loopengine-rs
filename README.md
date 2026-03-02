@@ -92,6 +92,99 @@ All errors are represented by `loopengine::Error`:
 
 Every request is signed with `HMAC-SHA256` over the canonical string `"METHOD\nPATH\nTIMESTAMP\nSHA256(body)"`. The signature is base64url-encoded (no padding) and sent as the `X-Signature: v1=<sig>` header alongside `X-Project-Key` and `X-Timestamp`. All signing logic is handled transparently by the SDK.
 
+## Verifying webhook payloads
+
+When LoopEngine delivers a webhook to your endpoint, it signs the request with HMAC-SHA256 using a **signing secret** that only you and LoopEngine know. Verifying that signature before processing the event confirms the request came from LoopEngine, was not tampered with, and — by also checking the timestamp — limits replay attacks.
+
+**Get the secret:** In your dashboard, open your project → Webhooks. The signing secret (`whsec_live_...`) is shown when you create or rotate the webhook. Store it as an environment variable and never commit it.
+
+**Critical:** call `verify_webhook` with the raw request body bytes **before** any JSON deserialisation. The signature is computed over the exact bytes received; deserialising and re-serialising the payload will produce a different byte sequence and fail verification.
+
+### Signature
+
+```rust
+pub fn loopengine::verify_webhook(
+    secret:           &str,
+    raw_body:         &[u8],
+    signature_header: &str,
+    timestamp_header: &str,
+    max_age_sec:      u64,
+) -> bool
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `secret` | `&str` | Signing secret from the dashboard (`whsec_live_...`) |
+| `raw_body` | `&[u8]` | Raw HTTP body as received, before any JSON deserialisation |
+| `signature_header` | `&str` | Full value of the `X-LoopEngine-Signature` header |
+| `timestamp_header` | `&str` | Value of the `X-LoopEngine-Timestamp` header (Unix seconds) |
+| `max_age_sec` | `u64` | Max timestamp age in seconds; use `300` for 5 min. Pass `0` to skip. |
+
+**Returns:** `bool` — `true` if valid, `false` if the signature does not match or the timestamp is outside the allowed window.
+
+### Axum example
+
+```toml
+# Cargo.toml
+[dependencies]
+loopengine = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+```
+
+```rust
+use axum::{body::Bytes, extract::State, http::HeaderMap, http::StatusCode, routing::post, Router};
+use loopengine::verify_webhook;
+
+#[derive(Clone)]
+struct AppState {
+    webhook_secret: String,
+}
+
+async fn handle_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,          // raw bytes — do NOT use Json<T> extractor here
+) -> StatusCode {
+    let sig = headers
+        .get("x-loopengine-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let ts = headers
+        .get("x-loopengine-timestamp")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if !verify_webhook(&state.webhook_secret, &body, sig, ts, 300) {
+        return StatusCode::UNAUTHORIZED;
+    }
+
+    // Deserialise AFTER verifying
+    let event: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return StatusCode::BAD_REQUEST,
+    };
+
+    println!("{}", event["type"]);
+    StatusCode::OK
+}
+
+#[tokio::main]
+async fn main() {
+    let state = AppState {
+        webhook_secret: std::env::var("LOOPENGINE_WEBHOOK_SECRET").unwrap(),
+    };
+    let app = Router::new()
+        .route("/webhook", post(handle_webhook))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+```
+
 ## License
 
 MIT

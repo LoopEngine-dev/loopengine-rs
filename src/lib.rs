@@ -22,6 +22,8 @@
 mod client;
 mod error;
 mod sign;
+mod webhook;
 
 pub use client::{Client, ClientBuilder};
 pub use error::Error;
+pub use webhook::verify_webhook;
